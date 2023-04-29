@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -6,6 +7,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Xsl;
+using Saxon.Api;
 
 namespace Simio.Xml
 {
@@ -17,55 +19,38 @@ namespace Simio.Xml
             public string XmlTransformError { get; set; }
             public string DataSetLoadError { get; set; }
         }
-        public static TransformResult TransformXmlToDataSet(string rawXml, string stylesheet, Action<string> setFinalXmlResult)
+
+        public static string TransformXml(string xmlData, string xslData)
         {
-            var memStream = new System.IO.MemoryStream();
+            var xsltProcessor = new Processor();
+            var documentBuilder = xsltProcessor.NewDocumentBuilder();
+            documentBuilder.BaseUri = new Uri("file://");
+            var xdmNode = documentBuilder.Build(new StringReader(xmlData));
 
-            // Attempt to load the XSLT and transform the XML
-            try
-            {
-                var transform = new XslCompiledTransform();
-                using (var xsltStrReader = new System.IO.StringReader(stylesheet))
-                using (var xsltReader = XmlReader.Create(xsltStrReader))
-                {
-                    transform.Load(xsltReader);
-                }
+            var xsltCompiler = xsltProcessor.NewXsltCompiler();
+            var xsltExecutable = xsltCompiler.Compile(new StringReader(xslData));
+            var xsltTransformer = xsltExecutable.Load();
+            xsltTransformer.InitialContextNode = xdmNode;
 
-                using (var xmlStrReader = new System.IO.StringReader(rawXml))
-                using (var xmlReader = XmlReader.Create(xmlStrReader))
-                using (var xmlWriter = XmlWriter.Create(memStream, new XmlWriterSettings() { ConformanceLevel = ConformanceLevel.Auto }))
-                {
-                    transform.Transform(xmlReader, xmlWriter);
+            var results = new XdmDestination();
 
-                    if (setFinalXmlResult != null)
-                    {
-                        var finalXMLString = xmlWriter.Settings.Encoding.GetString(memStream.GetBuffer(), 0, (int)memStream.Length);
-                        setFinalXmlResult(finalXMLString);
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                var errorString = $"Error processing XSLT: {e.Message}";
-                while (e.InnerException != null)
-                {
-                    errorString += System.Environment.NewLine + e.InnerException.Message;
-                    e = e.InnerException;
-                }
+            xsltTransformer.Run(results);
+            return results.XdmNode.OuterXml;
+        }
 
-                return new TransformResult()
-                {
-                    XmlTransformError = errorString
-                };
-            }
+
+        public static TransformResult TransformXmlToDataSet(string rawXml, string stylesheet, Action<string> setFinalXmlResult)
+        {          
 
             // If the XSLT loaded and transformed the XML correctly, now try loading that into a dataset
             try
             {
-                var dataSet = new DataSet();
-                using (var finalXmlReader = new System.IO.StreamReader(new System.IO.MemoryStream(memStream.GetBuffer(), 0, (int)memStream.Length)))
-                    dataSet.ReadXml(finalXmlReader);
+                var xmlData = TransformXml(rawXml, stylesheet);
 
+                var dataSet = new DataSet();
+
+                dataSet.ReadXml(new XmlTextReader(new StringReader(xmlData)));
+ 
                 return new TransformResult()
                 {
                     DataSet = dataSet
