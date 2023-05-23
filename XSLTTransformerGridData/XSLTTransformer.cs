@@ -36,6 +36,11 @@ namespace XSLTTransformerGridData
             sourceTablesProp.Description = "SourceTables.";
             sourceTablesProp.DefaultValue = String.Empty;
 
+            var nestedRelationshipsProp = schema.PerTableProperties.AddNameValuePairsProperty("NestedRelationships", null);
+            nestedRelationshipsProp.DisplayName = "Nested Relationships";
+            nestedRelationshipsProp.Description = "Nested Relationships.";
+            nestedRelationshipsProp.DefaultValue = String.Empty;
+
             var stylesheetProp = schema.PerTableProperties.AddXSLTProperty("Stylesheet");
             stylesheetProp.Description = "The transform to apply to the data source data to generate the destination data.";
             stylesheetProp.DefaultValue =
@@ -47,12 +52,21 @@ namespace XSLTTransformerGridData
     </xsl:template>
 </xsl:stylesheet>";
             stylesheetProp.GetXML += StylesheetProp_GetXML;
+
+            var sourceXMLFileNameProp = schema.PerTableProperties.AddFileProperty("SourceXMLFileName");
+            sourceXMLFileNameProp.DisplayName = "Source XML File Name";
+            sourceXMLFileNameProp.Description = "Source XML File Name.";
+            sourceXMLFileNameProp.DefaultValue = String.Empty;
+
+            var sourceXSDFileNameProp = schema.PerTableProperties.AddFileProperty("SourceXSDFileName");
+            sourceXSDFileNameProp.DisplayName = "Source XSD File Name";
+            sourceXSDFileNameProp.Description = "Source XSD File Name.";
+            sourceXSDFileNameProp.DefaultValue = String.Empty;
         }
 
         private void StylesheetProp_GetXML(object sender, XSLTAddInPropertyGetXMLEventArgs e)
         {
-            // This is called when the stylesheet editor pops up. We want to provide the XML data we would expect to come back during an actual import,
-            //  so we call that here.
+            //This is called when the stylesheet editor pops up.We want to provide the XML data we would expect to come back during an actual import,
             var sourceTablesStr = (string)e.OtherProperties?["SourceTables"]?.Value;
             var sourceTables = AddInPropertyValueHelper.NameValuePairsFromString(sourceTablesStr);
             var sourceTablesArr = sourceTables.Select(z => z.Value).ToArray();
@@ -75,7 +89,6 @@ namespace XSLTTransformerGridData
 
                 e.XML = "Getting Source Data Is Not Supported Until e.GetLocalTableRecords() can be added to XSLTAddInPropertyGetXMLEventArgs";
             }
-
         }
     }
 
@@ -92,13 +105,19 @@ namespace XSLTTransformerGridData
             var sourceTablesArr = sourceTables.Select(z => z.Value).ToArray();
             if (sourceTablesArr.Length == 0)
                 return OpenImportDataResult.Failed("Source Tables have been defined.");
-            var sourceTablesJoin = String.Join(",", sourceTablesArr);
+
+            var nestedRelationshipsStr = (string)openContext.Settings.GridDataSettings[openContext.TableName]?.Properties["NestedRelationships"]?.Value;
+            var nestedRelationships = AddInPropertyValueHelper.NameValuePairsFromString(nestedRelationshipsStr);
+            var nestedRelationshipsArr = nestedRelationships.Select(z => z.Value).ToArray();
 
             var stylesheet = (string)openContext.Settings.GridDataSettings[openContext.TableName]?.Properties["Stylesheet"]?.Value;
             if (String.IsNullOrWhiteSpace(stylesheet))
             {
                 return OpenImportDataResult.Failed("Stylesheet table parameter is not specified.");
             }
+
+            var sourceXMLFileName = (string)openContext.Settings.GridDataSettings[openContext.TableName]?.Properties?["SourceXMLFileName"]?.Value;
+            var sourceXSDFileName = (string)openContext.Settings.GridDataSettings[openContext.TableName]?.Properties?["SourceXSDFileName"]?.Value;
 
             // Where Tranformation Happens
             DataSet sourceTablesDataSet = new DataSet();
@@ -109,14 +128,19 @@ namespace XSLTTransformerGridData
                 sourceTablesDataSet.Tables.Add(soruceDataTable);
             }
 
-            var sourceDataTablesXML = sourceTablesDataSet.GetXml();
+            foreach (var nestedRelationshipStr in nestedRelationshipsArr)
+            {
+                var tableAndColumnArr = nestedRelationshipStr.Split('.');
+                var relation = sourceTablesDataSet.Relations.Add(sourceTablesDataSet.Tables[tableAndColumnArr[0]].Columns[tableAndColumnArr[1]], sourceTablesDataSet.Tables[tableAndColumnArr[2]].Columns[tableAndColumnArr[3]]);
+                relation.Nested = true;
+            }
 
-            // Short Term Hack to Get Xls Respresentation Of Data Set For Transformation
-            System.Diagnostics.Trace.TraceInformation(sourceDataTablesXML);
+            if (sourceXMLFileName.Length > 0) sourceTablesDataSet.WriteXml(sourceXMLFileName);
+            if (sourceXSDFileName.Length > 0) sourceTablesDataSet.WriteXmlSchema(sourceXSDFileName);
 
             DataSet destinationTableDataSet = new DataSet();
 
-            var transformedResult = Simio.Xml.XsltTransform.TransformXmlToDataSet(sourceDataTablesXML, stylesheet, null);
+            var transformedResult = Simio.Xml.XsltTransform.TransformXmlToDataSet(sourceTablesDataSet.GetXml(), stylesheet, null);
             if (transformedResult.XmlTransformError != null)
                 return new OpenImportDataResult() { Result = GridDataOperationResult.Failed, Message = transformedResult.XmlTransformError };
             if (transformedResult.DataSetLoadError != null)
