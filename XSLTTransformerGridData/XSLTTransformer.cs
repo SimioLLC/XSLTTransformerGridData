@@ -15,6 +15,7 @@ using XSLTransformerGridData;
 
 namespace XSLTTransformerGridData
 {
+    [RequiresGetLocalTableRecords]
     public class XSLTTranformerImporterDefinition : IGridDataImporterDefinition
     {
         public string Name => "XSLT Transformer";
